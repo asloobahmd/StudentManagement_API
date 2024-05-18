@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using StudentManagementSystemAPI.Data;
 using StudentManagementSystemAPI.Models;
 using StudentManagementSystemAPI.Models.DTO;
@@ -21,11 +22,65 @@ namespace StudentManagementSystemAPI.Controllers
         }
 
         [HttpGet]
-        public async Task<ActionResult<IEnumerable<Student>>> GetStudents()
+        public async Task<ActionResult<IEnumerable<Student>>> GetStudents(
+            [FromQuery] int page, 
+            [FromQuery] int pageSize,  
+            [FromQuery] string? course, 
+            [FromQuery] string? q, 
+            [FromQuery] string? sortBy)
         {
             try
             {
-                var students = await _db.Students.ToListAsync();
+                //initial query
+                var filteredQuery = _db.Students.AsQueryable();
+
+                //filtering
+                if (!string.IsNullOrEmpty(course))
+                {
+                    filteredQuery = filteredQuery.Where(u => u.Course.ToLower() == course.ToLower());
+                }
+
+                //searching
+                if (!string.IsNullOrEmpty(q))
+                {
+                    filteredQuery = filteredQuery.Where(u => u.Name.ToLower().Contains(q) || u.Email.ToLower().Contains(q));
+                }
+
+                //sorting
+                if (!string.IsNullOrEmpty(sortBy))
+                {
+                    string[] sortParams = sortBy.Split(':');
+
+                    string sortByField = sortParams[0].ToLower();
+                    string order = sortParams[1].ToLower();
+
+                    bool isDescending = order == "desc";
+
+                    switch (sortByField?.ToLower())
+                    {
+                        case "name":
+                            filteredQuery = isDescending ? filteredQuery.OrderByDescending(u => u.Name) : filteredQuery.OrderBy(u => u.Name);
+                            break;              
+                        case "course":
+                            filteredQuery = isDescending ? filteredQuery.OrderByDescending(u => u.Course) : filteredQuery.OrderBy(u => u.Course);
+                            break;
+                        case "age":
+                            filteredQuery = isDescending ? filteredQuery.OrderByDescending(u => u.Age) : filteredQuery.OrderBy(u => u.Age);
+                            break;
+                        case "address":
+                            filteredQuery = isDescending ? filteredQuery.OrderByDescending(u => u.Address) : filteredQuery.OrderBy(u => u.Address);
+                            break;
+                        default:
+                            break;
+                    }
+                }
+
+                //pagination
+
+                var paginatedQuery = filteredQuery.Skip((page - 1) * pageSize).Take(pageSize);
+
+                var students = await paginatedQuery.ToListAsync();
+                var total = await filteredQuery.CountAsync();
 
                 var studentDtos = new List<StudentDto>();
 
@@ -42,7 +97,10 @@ namespace StudentManagementSystemAPI.Controllers
                     });
                 }
 
-                return Ok(studentDtos);
+                // Calculate total pages using ceiling to handle fractions
+                int totalPages = (int)Math.Ceiling((double)total / pageSize);
+
+                return Ok(new { page = page, per_page = pageSize, total = total, total_pages = totalPages, students = studentDtos });
             }catch (Exception ex)
             {
                 return StatusCode(500, "Internal server error");
